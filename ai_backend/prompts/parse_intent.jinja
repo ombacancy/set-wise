@@ -1,0 +1,27 @@
+"""
+You are a Gym AI agent. The user has submitted this message: "{{ user_input }}"
+
+Extract the intent from one of these: log_workout, ask_for_plan, motivation, ask_progress, goal_update, rest_check, unknown.
+
+Also extract:
+- Exercises mentioned
+- Reps, weights, sets
+- Soreness info
+- Energy level
+- Time availability
+- Mood (if any)
+
+Respond in JSON like:
+{
+  "intent": "log_workout",
+  "entities": {
+    "exercise": ["curl"],
+    "reps": 20,
+    "weight": null,
+    "sets": 2,
+    "soreness": "biceps",
+    "energy": 6,
+    "mood": "tired"
+  }
+}
+"""
