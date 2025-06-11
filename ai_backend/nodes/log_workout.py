@@ -1,5 +1,28 @@
-def log_workout_node(state):
-    # Logic to log to database or append to user profile
-    workout_data = state.entities
-    state.response = f"Got it! Logged your workout: {workout_data.get('exercise', [])} with {workout_data.get('reps', '?')} reps."
-    return state
+# nodes/log_workout.py
+
+from schema import IntentPayload
+from vdb import store_log
+from datetime import datetime
+
+
+class LogWorkoutNode:
+    def __call__(self, state: IntentPayload) -> IntentPayload:
+        if state.workout:
+            log_text = (
+                f"{state.workout.exercise}, "
+                f"{state.workout.sets or '?'} sets, "
+                f"{state.workout.reps or '?'} reps, "
+                f"{state.workout.weight or '?'} kg, "
+                f"notes: {state.workout.notes or 'None'}"
+            )
+            metadata = {
+                "user_id": state.user_id,
+                "exercise": state.workout.exercise,
+                "date": state.workout.date.isoformat(),
+                "reps": state.workout.reps,
+                "sets": state.workout.sets,
+                "weight": state.workout.weight,
+                "notes": state.workout.notes,
+            }
+            store_log(state.user_id, log_text, metadata)
+        return state
