@@ -1,0 +1,52 @@
+[
+  {
+    "name": "Dumbbell Curl",
+    "equipment": "Dumbbell",
+    "target_muscle": "Biceps",
+    "injury_risk": [
+      "elbow"
+    ],
+    "gif_url": "https://example.com/curl.gif",
+    "explanation": "A curl that targets your biceps with strict form."
+  },
+  {
+    "name": "Leg Press",
+    "equipment": "Leg Press Machine",
+    "target_muscle": "Quadriceps",
+    "injury_risk": [
+      "knee"
+    ],
+    "gif_url": "https://example.com/legpress.gif",
+    "explanation": "A machine-based exercise that works the quadriceps and glutes."
+  },
+  {
+    "name": "Bench Press",
+    "equipment": "Barbell",
+    "target_muscle": "Chest",
+    "injury_risk": [
+      "shoulder"
+    ],
+    "gif_url": "https://example.com/benchpress.gif",
+    "explanation": "A compound exercise that targets the chest, shoulders, and triceps."
+  },
+  {
+    "name": "Deadlift",
+    "equipment": "Barbell",
+    "target_muscle": "Hamstrings",
+    "injury_risk": [
+      "lower_back"
+    ],
+    "gif_url": "https://example.com/deadlift.gif",
+    "explanation": "A full-body exercise that primarily targets the hamstrings and lower back."
+  },
+  {
+    "name": "Pull-Up",
+    "equipment": "Pull-Up Bar",
+    "target_muscle": "Lats",
+    "injury_risk": [
+      "shoulder"
+    ],
+    "gif_url": "https://example.com/pullup.gif",
+    "explanation": "A bodyweight exercise that targets the lats and biceps."
+  }
+]
