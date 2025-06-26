@@ -1,7 +1,6 @@
 from langchain_core.tools import tool
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import Runnable
-import boto3
 from typing import Annotated
 
 from langchain_groq import ChatGroq
@@ -14,58 +13,9 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, StateGraph, START
 from langgraph.prebuilt import tools_condition
 
-
-# Fitness Analysis Tool
-@tool
-def analyze_fitness(workout_data: dict) -> dict:
-    """
-    Analyzes workout and provides personalized recommendations.
-
-    Args:
-        workout_data (dict): Dictionary containing:
-            - workout_type: str (e.g., 'cardio', 'strength')
-            - duration_minutes: int
-            - intensity_level: str ('low', 'medium', 'high')
-            - frequency_per_week: int
-
-    Returns:
-        dict: Analysis results and recommendations
-    """
-
-    def calculate_recommendations(data):
-        # Calculate optimal workout parameters
-        base_duration = data['duration_minutes']
-        current_frequency = data['frequency_per_week']
-        intensity = data['intensity_level']
-
-        # Calculate recommended progression
-        if intensity == 'low':
-            recommended_duration = min(base_duration + 10, 60)
-            recommended_frequency = min(current_frequency + 1, 5)
-        elif intensity == 'medium':
-            recommended_duration = min(base_duration + 5, 45)
-            recommended_frequency = min(current_frequency + 1, 4)
-        else:  # high intensity
-            recommended_duration = base_duration
-            recommended_frequency = min(current_frequency, 3)
-
-        return {
-            "current_analysis": {
-                "workout_level": intensity,
-                "weekly_minutes": base_duration * current_frequency
-            },
-            "recommendations": {
-                "target_duration": recommended_duration,
-                "target_frequency": recommended_frequency,
-                "next_intensity": "medium" if intensity == "low" else "high",
-                "rest_days": max(7 - recommended_frequency, 2)
-            }
-        }
-
-    return calculate_recommendations(workout_data)
+from tools import analyze_fitness, explain_workout, track_goal
 
 
-# Error Handling
 def handle_tool_error(state) -> dict:
     """Handles errors during tool execution."""
     error = state.get("error")
@@ -140,7 +90,7 @@ fitness_assistant_prompt = ChatPromptTemplate.from_messages([
 ])
 
 # Tools Configuration
-fitness_tools = [analyze_fitness]
+fitness_tools = [analyze_fitness, track_goal, explain_workout]
 fitness_assistant_runnable = fitness_assistant_prompt | llm.bind_tools(fitness_tools)
 
 # Graph Construction
@@ -149,6 +99,8 @@ builder = StateGraph(State)
 # Add nodes
 builder.add_node("assistant", Assistant(fitness_assistant_runnable))
 builder.add_node("tools", create_tool_node_with_fallback(fitness_tools))
+builder.add_node("goal_tracker", create_tool_node_with_fallback([track_goal]))
+builder.add_node("explainer", create_tool_node_with_fallback([explain_workout]))
 
 # Add edges
 builder.add_edge(START, "assistant")
@@ -156,7 +108,9 @@ builder.add_conditional_edges(
     "assistant",
     tools_condition,
 )
-builder.add_edge("tools", "assistant")
+builder.add_edge("tools", "goal_tracker")
+builder.add_edge("goal_tracker", "explainer")
+builder.add_edge("explainer", "assistant")
 
 # Memory Configuration
 memory = MemorySaver()
@@ -170,18 +124,18 @@ if __name__ == "__main__":
         }
     }
 
-    test_messages = [
-        "I want to improve my workouts",
-        "I do cardio for 30 minutes at medium intensity, 3 times per week",
-    ]
-
     state = {"messages": []}
+    print("🤖 Fitness Chatbot is ready. Type your message below (or type 'exit' to quit):\n")
 
-    for message in test_messages:
-        state["messages"].append(("user", message))
+    while True:
+        user_input = input("You: ")
+        if user_input.lower() in ["exit", "quit"]:
+            print("👋 Goodbye!")
+            break
+
+        state["messages"].append(("user", user_input))
         response = graph.invoke(state, config)
 
-        print(f"User: {message}")
         for msg in response["messages"]:
             if hasattr(msg, "content"):
                 print(f"Assistant: {msg.content}")
