@@ -1,0 +1,13 @@
+# ai/requirements.txt
+streamlit>=1.27.0
+langchain>=0.1.0
+langchain-core>=0.1.1
+langchain-groq>=0.1.0
+langgraph>=0.0.25
+chromadb>=0.4.18
+python-dotenv>=1.0.0
+psycopg2-binary>=2.9.9
+sqlalchemy>=2.0.0
+langchain-chroma>=0.0.1
+langchain-huggingface>=0.0.1
+langchain-text-splitters>=0.0.1

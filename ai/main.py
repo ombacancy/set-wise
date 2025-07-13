@@ -25,7 +25,7 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 # LLM
-from langchain_groq import ChatGroq
+from llm import llm
 
 # Load environment variables
 from dotenv import load_dotenv
@@ -35,12 +35,6 @@ load_dotenv()
 # Enable verbose mode for debugging
 set_verbose(True)
 
-# Initialize LLM
-llm = ChatGroq(
-    api_key="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",
-    model="llama-3.3-70b-versatile",
-    temperature=0.7
-)
 
 # Vector DB setup
 embeddings = HuggingFaceEmbeddings(
@@ -77,8 +71,6 @@ class State(TypedDict):
 
 
 # Tools for the agents
-# Update in main.py - modify the tool functions to accept user_id
-
 @tool
 def check_health_issues(conversation: str, user_id: str = "default_user") -> Dict[str, Any]:
     """
@@ -92,7 +84,6 @@ def check_health_issues(conversation: str, user_id: str = "default_user") -> Dic
     )
     context = "\n".join([doc.page_content for doc in results])
 
-    # Rest of function remains the same...
     prompt = ChatPromptTemplate.from_messages([
         ("system", """You are a health monitoring assistant. Analyze the conversation to identify:
         1. Any mentioned injuries or pain points
@@ -271,14 +262,23 @@ def explain_workout_science(workout: str) -> str:
     Provides scientific explanation for the recommended workout.
     """
     prompt = ChatPromptTemplate.from_messages([
-        ("system", """You are a fitness science educator. Explain the scientific benefits of the workout, including:
-        1. The physiological adaptations it promotes
-        2. Why it's appropriate given the user's goals
-        3. How it safely works around any health issues
-        4. Evidence-based benefits of the exercise selection
+        ("system", """You are a fitness science educator explaining workouts to an Indian gym member. 
+            Explain the scientific benefits of the workout, including:
+            1. The physiological adaptations it promotes
+            2. Why it's appropriate given the user's goals
+            3. How it safely works around any health issues
+            4. Evidence-based benefits of the exercise selection
 
-        Keep your explanation informative but accessible.
-        """),
+            Make your explanation:
+            - Use examples relevant to Indian lifestyles and diet patterns
+            - Reference traditional Indian exercise forms like yoga when appropriate
+            - Consider common health concerns in the Indian population (like diabetes and heart disease)
+            - Use easily available equipment or alternatives common in Indian households
+            - Incorporate terminology that resonates with Indian audiences
+            - Consider cultural contexts around fitness and body image in India
+
+            Keep your explanation informative but accessible for an Indian audience.
+            """),
         ("user", f"Workout: {workout}")
     ])
 
@@ -341,11 +341,16 @@ class OrchestratorAgent:
         self.prompt = ChatPromptTemplate.from_messages([
             (
                 "system",
-                """You are an intelligent fitness coach assistant. Analyze the user's message and respond appropriately.
-                If they mention injuries or pain, focus on health concerns.
-                If they mention goals or targets, focus on their fitness objectives.
-                If they mention workouts or exercises, provide recommendations.
-                Be encouraging, professional, and focused on safety first.
+                """You are a specialized Indian fitness coach assistant with expertise in workout planning.
+                Your responses must be precise, concise, and actionable. Limit responses to 3-4 sentences maximum.
+
+                Prioritize:
+                - For injuries: Recommend immediate modifications and safety precautions
+                - For goals: Provide specific, measurable targets and timeframes
+                - For workouts: Suggest specific exercises with clear sets/reps/intensity
+
+                Avoid generic advice. Focus on practical guidance that can be implemented immediately.
+                Use technical fitness terminology appropriately but ensure it remains accessible.
                 """
             ),
             ("placeholder", "{messages}"),

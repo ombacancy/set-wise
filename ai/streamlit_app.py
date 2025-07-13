@@ -1,20 +1,10 @@
-# ai/streamlit_app.py
-
-import os
 import streamlit as st
-import uuid
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from langchain_core.runnables import RunnableConfig
-from datetime import datetime
 
-# Import from main.py
-from main import (
-    build_fitness_agent_graph,
-    llm,
-    health_store,
-    goals_store,
-    workout_store
-)
+# Import the API connector
+from api_connector import APIConnector
+
+# Initialize API connector
+api = APIConnector()
 
 # Page configuration
 st.set_page_config(
@@ -29,13 +19,13 @@ st.markdown("""
 <style>
     .main-header {
         font-size: 2.5rem;
-        color: #3951c6;
+        color: #c2c2c2;
         text-align: center;
         margin-bottom: 1rem;
     }
     .sub-header {
         font-size: 1.5rem;
-        color: #555;
+        color: #c2c2c2;
         text-align: center;
         margin-bottom: 2rem;
     }
@@ -63,8 +53,11 @@ st.markdown("""
         border-radius: 10px;
         border: 1px solid #c0c0c0;
     }
-    h1, h2, h3, p {
-        color: #333333 !important;
+    h1, h2, h3 {
+        color: #c2c2c2 !important;
+    }
+    p {
+        color: #c2c2c2 !important;
     }
     .stMarkdown {
         color: #333333 !important;
@@ -79,14 +72,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Create necessary directories
-os.makedirs("./data/chroma/health", exist_ok=True)
-os.makedirs("./data/chroma/goals", exist_ok=True)
-os.makedirs("./data/chroma/workouts", exist_ok=True)
-os.makedirs("./data/users", exist_ok=True)
-
 # Title and description
-st.markdown("<h1 class='main-header'>🏋️‍♀️ AI Fitness Coach</h1>", unsafe_allow_html=True)
+st.markdown("<h1 class='main-header'>AI Fitness Coach</h1>", unsafe_allow_html=True)
 st.markdown("<p class='sub-header'>Your personalized workout assistant</p>", unsafe_allow_html=True)
 
 # User authentication
@@ -94,106 +81,94 @@ if "user_id" not in st.session_state:
     st.session_state.user_id = None
     st.session_state.user_name = None
     st.session_state.user_details = {}
+    st.session_state.messages = []
+    st.session_state.profile = {}
 
 # User login/registration form
 if st.session_state.user_id is None:
     st.markdown("<h2>Welcome! Let's set up your profile</h2>", unsafe_allow_html=True)
 
-    with st.form(key="user_form", clear_on_submit=True):
-        st.markdown('<div class="user-form">', unsafe_allow_html=True)
-        user_option = st.radio("Choose an option:", ["Create new profile", "Log in with existing ID"])
+    col1, col2 = st.columns([1, 1])
 
-        if user_option == "Create new profile":
-            user_name = st.text_input("Your name:")
-            age = st.number_input("Age:", min_value=16, max_value=100, value=30)
-            gender = st.selectbox("Gender:", ["Male", "Female", "Non-binary", "Prefer not to say"])
-            height = st.number_input("Height (cm):", min_value=100, max_value=250, value=170)
-            weight = st.number_input("Weight (kg):", min_value=30, max_value=250, value=70)
+    with col1:
+        st.subheader("Create new profile")
+
+        with st.form(key="user_form", clear_on_submit=True):
+            name = st.text_input("Name")
+            age = st.number_input("Age", min_value=16, max_value=100, value=30)
+            gender = st.selectbox("Gender", ["Male", "Female", "Other"])
+            height = st.number_input("Height (cm)", min_value=100, max_value=250, value=170)
+            weight = st.number_input("Weight (kg)", min_value=30, max_value=250, value=70)
             fitness_level = st.select_slider(
-                "Fitness Level:",
+                "Fitness Level",
                 options=["Beginner", "Intermediate", "Advanced"]
             )
+        
+            submit_button = st.form_submit_button("Create Profile")
+        
+            if submit_button and name:
+                with st.spinner("Creating profile..."):
+                    try:
+                        user_data = {
+                            "name": name,
+                            "age": age,
+                            "gender": gender,
+                            "height": height,
+                            "weight": weight,
+                            "fitness_level": fitness_level
+                        }
+        
+                        user = api.register_user(user_data)
+                        if "user_id" in user:
+                            st.session_state.user_id = user["user_id"]
+                            st.session_state.user_name = user["name"]
+                            st.session_state.user_details = user
+                            st.success("Profile created successfully!")
+                            st.rerun()
+                        else:
+                            st.error(f"Invalid response from API: Missing user_id")
+                    except Exception as e:
+                        st.error(f"{str(e)}")
+                        st.info("Please check if the API server is running correctly")
 
-            submit = st.form_submit_button("Create Profile")
+    with col2:
+        st.subheader("Log in with existing ID")
+        with st.form(key="login_form"):
+            user_id = st.text_input("Enter your user ID:", key="login_user_id")
+            login_submit = st.form_submit_button("Log In")
 
-            if submit and user_name:
-                # Create new user with UUID
-                user_id = str(uuid.uuid4())
-                st.session_state.user_id = user_id
-                st.session_state.user_name = user_name
-                st.session_state.user_details = {
-                    "id": user_id,
-                    "name": user_name,
-                    "age": age,
-                    "gender": gender,
-                    "height": height,
-                    "weight": weight,
-                    "fitness_level": fitness_level,
-                    "created_at": datetime.now().isoformat()
-                }
+            if login_submit and user_id:
+                try:
+                    # Login user
+                    response = api.login_user(user_id)
 
-                # Save user details to file
-                with open(f"./data/users/{user_id}.txt", "w") as f:
-                    for key, value in st.session_state.user_details.items():
-                        f.write(f"{key}: {value}\n")
+                    # Store user info in session state
+                    st.session_state.user_id = response["user_id"]
+                    st.session_state.user_name = response["name"]
+                    st.session_state.user_details = response
 
-                st.success(f"Profile created successfully! Your ID: {user_id}")
-                st.info("Please save your ID for future logins")
-                st.rerun()
-
-        else:  # Log in with existing ID
-            user_id = st.text_input("Enter your user ID:")
-            submit = st.form_submit_button("Log In")
-
-            if submit and user_id:
-                # Check if user exists
-                if os.path.exists(f"./data/users/{user_id}.txt"):
-                    # Load user details
-                    user_details = {}
-                    with open(f"./data/users/{user_id}.txt", "r") as f:
-                        for line in f:
-                            if ":" in line:
-                                key, value = line.strip().split(":", 1)
-                                user_details[key.strip()] = value.strip()
-
-                    st.session_state.user_id = user_id
-                    st.session_state.user_name = user_details.get("name", "User")
-                    st.session_state.user_details = user_details
-                    st.success(f"Welcome back, {st.session_state.user_name}!")
+                    st.success(f"Welcome back, {response['name']}!")
                     st.rerun()
-                else:
-                    st.error("User ID not found. Please check and try again or create a new profile.")
-
-        st.markdown('</div>', unsafe_allow_html=True)
+                except Exception as e:
+                    st.error(f"Error logging in: {str(e)}")
 else:
     # Show user is logged in
     st.sidebar.success(f"Logged in as: {st.session_state.user_name}")
-    st.sidebar.button("Log Out", on_click=lambda: st.session_state.clear())
+    if st.sidebar.button("Log Out"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
 
-    # Initialize session state for chat and graph
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            SystemMessage(content=f"I'm your AI fitness coach. I'm here to help you, {st.session_state.user_name}. I can create personalized workouts, track your goals, and adapt exercises to any health concerns you have. How can I help you today?")
-        ]
-        st.session_state.history = []
-        st.session_state.state = {
-            "messages": st.session_state.messages,
-            "health_issues": None,
-            "goals": None,
-            "previous_workouts": None,
-            "recommended_workout": None,
-            "user_id": st.session_state.user_id,  # Add user_id to state
-            "user_details": st.session_state.user_details  # Add user details to state
-        }
-        st.session_state.agent = build_fitness_agent_graph()
-        st.session_state.config = RunnableConfig(
-            configurable={
-                "thread_id": f"fitness-session-{st.session_state.user_id}-{datetime.now().strftime('%Y%m%d%H%M%S')}",
-                "user_id": st.session_state.user_id  # Add user_id to config
-            },
-            recursion_limit=100,
-            callbacks=None
-        )
+    # Get user profile from API if not already loaded
+    if not st.session_state.profile:
+        try:
+            st.session_state.profile = api.get_user_profile(st.session_state.user_id)
+
+            # Get chat history
+            chat_history = api.get_chat_history(st.session_state.user_id)
+            st.session_state.messages = chat_history
+        except Exception as e:
+            st.error(f"Error loading profile: {str(e)}")
 
     # Sidebar with user profile
     with st.sidebar:
@@ -201,7 +176,7 @@ else:
 
         # Display user details
         with st.expander("Personal Information", expanded=True):
-            user_details = st.session_state.user_details
+            user_details = st.session_state.profile.get("personal_info", {})
             st.write(f"**Name:** {user_details.get('name', 'Not provided')}")
             st.write(f"**Age:** {user_details.get('age', 'Not provided')}")
             st.write(f"**Gender:** {user_details.get('gender', 'Not provided')}")
@@ -210,66 +185,76 @@ else:
             st.write(f"**Fitness Level:** {user_details.get('fitness_level', 'Not provided')}")
 
         with st.expander("Health Information", expanded=False):
-            if st.session_state.state["health_issues"]:
-                st.write(st.session_state.state["health_issues"])
+            health_issues = st.session_state.profile.get("health_issues")
+            if health_issues:
+                st.write(health_issues)
             else:
-                st.write("No health issues recorded yet. Mention any injuries or pain points in the chat.")
+                st.write("No health issues recorded. Mention any injuries or concerns in chat.")
 
         with st.expander("Fitness Goals", expanded=False):
-            if st.session_state.state["goals"]:
-                st.write(st.session_state.state["goals"])
+            goals = st.session_state.profile.get("goals")
+            if goals:
+                st.write(goals)
             else:
-                st.write("No goals recorded yet. Share your fitness goals in the chat.")
+                st.write("No fitness goals recorded. Share your goals in chat.")
 
         with st.expander("Workout History", expanded=False):
-            if st.session_state.state["previous_workouts"]:
-                st.write(st.session_state.state["previous_workouts"])
+            previous_workouts = st.session_state.profile.get("previous_workouts")
+            if previous_workouts:
+                st.write(previous_workouts)
             else:
-                st.write("No workout history yet.")
+                st.write("No workout history recorded yet.")
 
         if st.button("Clear Conversation"):
-            st.session_state.messages = [
-                SystemMessage(content=f"I'm your AI fitness coach. I'm here to help you, {st.session_state.user_name}. I can create personalized workouts, track your goals, and adapt exercises to any health concerns you have. How can I help you today?")
-            ]
-            st.session_state.history = []
-            st.session_state.state = {
-                "messages": st.session_state.messages,
-                "health_issues": None,
-                "goals": None,
-                "previous_workouts": None,
-                "recommended_workout": None,
-                "user_id": st.session_state.user_id,
-                "user_details": st.session_state.user_details
-            }
-            st.rerun()
+            try:
+                api.clear_chat_history(st.session_state.user_id)
+                st.session_state.messages = []
+                st.success("Chat history cleared!")
+                st.rerun()
+            except Exception as e:
+                st.error(f"Error clearing chat: {str(e)}")
 
         st.markdown("---")
         st.markdown("### Quick Prompts")
-        quick_prompts = {
-            "Set fitness goals": "I want to focus on fat loss and muscle toning.",
-            "Report injury": "My right shoulder has been hurting during overhead exercises.",
-            "Request workout": "Can you suggest a home workout with minimal equipment?",
-            "Ask about nutrition": "What should I eat to support muscle growth?"
-        }
 
-        for prompt_title, prompt_text in quick_prompts.items():
-            if st.button(prompt_title):
-                st.session_state.quick_prompt = prompt_text
-                st.rerun()
+        try:
+            # Get quick prompts from API
+            quick_prompts = api.get_quick_prompts()
+
+            for prompt in quick_prompts:
+                if st.button(prompt["title"]):
+                    st.session_state.quick_prompt = prompt["content"]
+                    st.rerun()
+        except Exception as e:
+            # Use default prompts if API call fails
+            default_prompts = {
+                "Set fitness goals": "I want to focus on fat loss and muscle toning.",
+                "Report injury": "My right shoulder has been hurting during overhead exercises.",
+                "Request workout": "Can you suggest a home workout with minimal equipment?",
+                "Ask about nutrition": "What should I eat to support muscle growth?"
+            }
+
+            for prompt_title, prompt_text in default_prompts.items():
+                if st.button(prompt_title):
+                    st.session_state.quick_prompt = prompt_text
+                    st.rerun()
+
+    # Main chat area
+    st.header("Chat with Your AI Fitness Coach")
 
     # Display chat history
     chat_container = st.container()
     with chat_container:
-        for i, msg in enumerate(st.session_state.history):
-            if isinstance(msg, HumanMessage):
+        for msg in st.session_state.messages:
+            if msg["role"] == "user":
                 st.markdown(f"""<div class='user-message'>
                     <strong style="color:#000000;">You:</strong>
-                    <span style="color:#000000;">{msg.content}</span>
+                    <span style="color:#000000;">{msg["content"]}</span>
                 </div>""", unsafe_allow_html=True)
-            elif isinstance(msg, AIMessage):
+            elif msg["role"] == "assistant":
                 st.markdown(f"""<div class='bot-message'>
                     <strong style="color:#000000;">Coach:</strong>
-                    <span style="color:#000000;">{msg.content}</span>
+                    <span style="color:#000000;">{msg["content"]}</span>
                 </div>""", unsafe_allow_html=True)
 
     # User input
@@ -281,59 +266,57 @@ else:
         del st.session_state.quick_prompt
 
     if user_input:
-        # Add user message to state
-        user_message = HumanMessage(content=user_input)
-        st.session_state.messages.append(user_message)
-        st.session_state.history.append(user_message)
-        st.session_state.state["messages"] = st.session_state.messages
+        # Show user message immediately
+        st.markdown(f"""<div class='user-message'>
+            <strong style="color:#000000;">You:</strong>
+            <span style="color:#000000;">{user_input}</span>
+        </div>""", unsafe_allow_html=True)
 
         # Show spinner while processing
         with st.spinner("Coach is thinking..."):
             try:
-                # Process through agent graph with increased recursion limit
-                response = st.session_state.agent.invoke(st.session_state.state, st.session_state.config)
-                st.session_state.state = response  # Update state
+                # Send message to API
+                response = api.chat_with_coach(st.session_state.user_id, user_input)
 
-                # Find the latest AI message
-                new_ai_messages = []
-                for msg in st.session_state.state["messages"]:
-                    if isinstance(msg, AIMessage) and msg not in st.session_state.history:
-                        new_ai_messages.append(msg)
+                # Add messages to session state
+                st.session_state.messages.append({"role": "user", "content": user_input})
+                st.session_state.messages.append({"role": "assistant", "content": response["content"]})
 
-                # If we got no AI messages, create a fallback response
-                if not new_ai_messages:
-                    fallback_msg = AIMessage(content="I understand your request. Let me help you with that.")
-                    st.session_state.history.append(fallback_msg)
-                    st.session_state.state["messages"].append(fallback_msg)
-                else:
-                    # Add all new AI messages to history
-                    for msg in new_ai_messages:
-                        st.session_state.history.append(msg)
+                # Display response
+                st.markdown(f"""<div class='bot-message'>
+                    <strong style="color:#000000;">Coach:</strong>
+                    <span style="color:#000000;">{response["content"]}</span>
+                </div>""", unsafe_allow_html=True)
 
-
-                # Update the sidebar info if data is available
-                if "health_issues" in st.session_state.state and st.session_state.state["health_issues"]:
-                    st.sidebar.success("Health information updated!")
-
-                if "goals" in st.session_state.state and st.session_state.state["goals"]:
-                    st.sidebar.success("Fitness goals updated!")
-
-                if "recommended_workout" in st.session_state.state and st.session_state.state["recommended_workout"]:
-                    st.sidebar.success("New workout added to your history!")
+                # Refresh profile data after chat
+                st.session_state.profile = api.get_user_profile(st.session_state.user_id)
 
             except Exception as e:
-                error_msg = AIMessage(content=f"I'll help you with that request. What specific details can you share?")
-                st.session_state.history.append(error_msg)
-                st.session_state.state["messages"].append(error_msg)
                 st.error(f"Error: {str(e)}")
+                fallback_msg = "I'll help you with that request. What specific details can you share?"
+                st.session_state.messages.append({"role": "user", "content": user_input})
+                st.session_state.messages.append({"role": "assistant", "content": fallback_msg})
 
-        # Rerun to update the UI
+                st.markdown(f"""<div class='bot-message'>
+                    <strong style="color:#000000;">Coach:</strong>
+                    <span style="color:#000000;">{fallback_msg}</span>
+                </div>""", unsafe_allow_html=True)
+
+        # Force a rerun to update the UI
         st.rerun()
 
 # Footer
+api_status = "API connected ✅"
+try:
+    api.check_api_status()
+except Exception as e:
+    api_status = f"API connection failed ❌: {str(e)}"
+    st.error(f"Cannot connect to the API server at {api.base_url}. Please make sure the FastAPI server is running.")
+
+# Show API status in the footer
 st.markdown("---")
-st.markdown("""
+st.markdown(f"""
 <div style="text-align: center; color: #333333;">
-    Powered by LangGraph and ChromaDB | Built with Streamlit
+    Powered by LangGraph and FastAPI | Built with Streamlit | {api_status}
 </div>
 """, unsafe_allow_html=True)
