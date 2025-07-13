@@ -60,6 +60,12 @@ workout_store = Chroma(
     persist_directory="./data/chroma/workouts"
 )
 
+workout_log_store = Chroma(
+    collection_name="workout_logs",
+    embedding_function=embeddings,
+    persist_directory="./data/chroma/workout_logs"
+)
+
 
 # State Management
 class State(TypedDict):
@@ -286,6 +292,127 @@ def explain_workout_science(workout: str) -> str:
     return response.content
 
 
+@tool
+def log_user_workout(workout_description: str, user_id: str = "default_user") -> Dict[str, Any]:
+    """
+    Logs a workout that the user reports completing.
+    """
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are a workout tracking assistant. Parse the user's completed workout into a structured format:
+        1. Extract exercises performed
+        2. Sets, reps, and weights where mentioned
+        3. Duration of cardio activities
+        4. Overall workout duration if mentioned
+        5. Any notes about difficulty or performance
+
+        Format as a clean, structured summary.
+        """),
+        ("user", f"Workout completed: {workout_description}")
+    ])
+
+    response = llm.invoke(prompt.format_messages(workout_description=workout_description))
+    parsed_workout = response.content
+
+    # Store the workout log with user_id metadata
+    workout_log_store.add_texts(
+        texts=[workout_description],
+        metadatas=[{
+            "date": datetime.now().isoformat(),
+            "parsed_workout": parsed_workout,
+            "user_id": user_id,
+            "type": "user_completed"
+        }]
+    )
+
+    return {
+        "logged_workout": parsed_workout
+    }
+
+
+@tool
+def retrieve_workout_logs(user_id: str = "default_user", days: int = 30) -> Dict[str, Any]:
+    """
+    Retrieves the user's logged workouts from the past specified days.
+    """
+    # Search for workout logs for this specific user
+    query = f"user:{user_id} recent completed workouts"
+    results = workout_log_store.similarity_search(
+        query,
+        k=10,
+        filter={"user_id": user_id, "type": "user_completed"} if user_id != "default_user" else {
+            "type": "user_completed"}
+    )
+
+    logs = []
+    for doc in results:
+        if hasattr(doc, "metadata") and "parsed_workout" in doc.metadata:
+            logs.append({
+                "date": doc.metadata.get("date", "unknown"),
+                "workout": doc.metadata["parsed_workout"]
+            })
+        else:
+            logs.append({"content": doc.page_content, "date": "unknown"})
+
+    return {
+        "workout_logs": logs
+    }
+
+
+@tool
+def summarize_workout_logs(user_id: str = "default_user", timeframe: str = "week") -> Dict[str, Any]:
+    """
+    Generates a summary of the user's workout logs for the specified timeframe.
+
+    Args:
+        user_id: The user's unique identifier.
+        timeframe: The timeframe to summarize ("week", "month", or "all").
+    """
+    # Search for workout logs for this specific user
+    query = f"user:{user_id} recent completed workouts"
+    results = workout_log_store.similarity_search(
+        query,
+        k=20,  # Get more results for comprehensive summary
+        filter={"user_id": user_id, "type": "user_completed"} if user_id != "default_user" else {"type": "user_completed"}
+    )
+
+    # Get the logs with dates
+    logs = []
+    for doc in results:
+        if hasattr(doc, "metadata") and "parsed_workout" in doc.metadata:
+            logs.append({
+                "date": doc.metadata.get("date", "unknown"),
+                "workout": doc.metadata["parsed_workout"],
+                "raw_description": doc.page_content
+            })
+
+    # Format logs as context for the LLM
+    logs_context = "\n\n".join([f"Date: {log['date']}\nWorkout: {log['workout']}" for log in logs])
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", f"""You are a workout analysis assistant. Generate a summary of the user's workouts for the past {timeframe}.
+        Include:
+        1. Total workouts completed
+        2. Body parts/muscle groups trained
+        3. Exercise patterns and preferences
+        4. Progress indicators where visible
+        5. Suggested areas of improvement
+        6. Visual representation of workout frequency (as text-based chart)
+        
+        Format as a clean, structured summary with sections and bullet points.
+        """),
+        ("user", f"Here are my recent workouts:\n\n{logs_context}")
+    ])
+
+    response = llm.invoke(prompt)
+    summary = response.content
+
+    return {
+        "workout_summary": summary,
+        "timeframe": timeframe,
+        "workout_count": len(logs)
+    }
+
+
 # Fallback handler for when the LLM fails to generate a response
 def handle_llm_error(state) -> dict:
     """Handles errors during LLM response generation."""
@@ -478,15 +605,17 @@ def custom_router(state):
         return "check_health_issues"
     elif "goal" in content or "target" in content or "aim" in content or "fat loss" in content:
         return "track_fitness_goals"
+    elif "i did" in content or "completed" in content or "finished" in content or "today's workout" in content:
+        return "log_workout"
     elif "workout" in content or "exercise" in content or "train" in content:
         return "workout_history"
+    elif "summary" in content or "progress" in content or "past workouts" in content or "history" in content:
+        return "summarize_workouts"
     else:
         return "orchestrator"  # Default route
 
 
 # Build the graph
-# In main.py, update the build_fitness_agent_graph function
-
 def build_fitness_agent_graph():
     # Initialize graph
     builder = StateGraph(State)
@@ -499,6 +628,9 @@ def build_fitness_agent_graph():
     builder.add_node("workout_history", create_tool_node_with_fallback([retrieve_workout_history]))
     builder.add_node("workout_recommender", create_tool_node_with_fallback([recommend_workout]))
     builder.add_node("workout_explainer", create_tool_node_with_fallback([explain_workout_science]))
+    builder.add_node("summarize_workouts", create_tool_node_with_fallback([summarize_workout_logs]))
+    builder.add_node("log_workout", create_tool_node_with_fallback([log_user_workout]))
+    builder.add_node("retrieve_logs", create_tool_node_with_fallback([retrieve_workout_logs]))
 
     # Add processing nodes
     builder.add_node("process_health", RunnableLambda(process_health_check))
@@ -506,11 +638,15 @@ def build_fitness_agent_graph():
     builder.add_node("process_history", RunnableLambda(process_workout_history))
     builder.add_node("prepare_recommendation", RunnableLambda(prepare_workout_recommendation))
     builder.add_node("process_recommendation", RunnableLambda(process_workout_recommendation))
+    builder.add_node("process_workout_log", RunnableLambda(lambda state: {
+        **state,
+        "logged_workout": state["messages"][-1].content if state["messages"] and hasattr(state["messages"][-1],
+                                                                                         "content") else None
+    }))
 
     # Add edges with explicit END condition
     builder.add_edge(START, "orchestrator")
 
-    # CRITICAL FIX: Add a way to reach END from orchestrator
     def should_end(state):
         """Determine if we should end the conversation."""
         # Check if we've reached a conclusion or answer
@@ -542,8 +678,9 @@ def build_fitness_agent_graph():
             "check_health_issues": "health_check",
             "track_fitness_goals": "goal_tracker",
             "workout_history": "workout_history",
-            "orchestrator": "orchestrator",  # Default route
-            "end": END  # Add explicit end path
+            "log_workout": "log_workout",
+            "orchestrator": "orchestrator",
+            "end": END
         }
     )
 
@@ -551,16 +688,43 @@ def build_fitness_agent_graph():
     builder.add_edge("health_check", "process_health")
     builder.add_edge("goal_tracker", "process_goals")
     builder.add_edge("workout_history", "process_history")
+    builder.add_edge("log_workout", "process_workout_log")
 
     # Connect processors back but allow END
     builder.add_edge("process_health", END)  # Allow ending after processing health
     builder.add_edge("process_goals", END)   # Allow ending after processing goals
+    builder.add_edge("process_workout_log", "retrieve_logs")  # After logging, show history
+    builder.add_edge("retrieve_logs", END)  # End after showing logs
 
+    # Recommendation flow
     builder.add_edge("process_history", "prepare_recommendation")
     builder.add_edge("prepare_recommendation", "workout_recommender")
     builder.add_edge("workout_recommender", "process_recommendation")
     builder.add_edge("process_recommendation", "workout_explainer")
     builder.add_edge("workout_explainer", END)  # End after explanation
+
+    # Add special connection for personal profile retrieval
+    def should_get_user_details(state):
+        """Determine if we need to get user details from profile."""
+        return "user_details" not in state or not state["user_details"]
+
+    # Add a node to retrieve user details if not present
+    builder.add_node("get_user_details", RunnableLambda(lambda state: {
+        **state,
+        "user_details": state.get("user_details", {}) or {"note": "User details should be injected here"}
+    }))
+
+    # Ensure user details are available before recommendation
+    builder.add_conditional_edges(
+        "prepare_recommendation",
+        should_get_user_details,
+        {
+            True: "get_user_details",
+            False: "workout_recommender"
+        }
+    )
+
+    builder.add_edge("get_user_details", "workout_recommender")
 
     # Compile graph with memory
     memory = MemorySaver()
