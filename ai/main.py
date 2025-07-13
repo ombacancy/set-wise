@@ -461,6 +461,36 @@ def create_tool_node_with_fallback(tools: list) -> dict:
     )
 
 
+def sanitize_llm_response(content: str) -> str:
+    """
+    Cleans LLM responses to remove hallucinations and corrupted output.
+    """
+    # Check for common hallucination patterns
+    hallucination_patterns = [
+        r'_both.*',
+        r'\(Size.*\)',
+        r'[A-Z]{3,}\.visit[A-Za-z]+',
+        r'.*BuilderFactory.*',
+        r'.*Injected.*',
+        r'-----.*',
+        r'/slider.*'
+    ]
+
+    # Clean the content by removing matches
+    cleaned_content = content
+    for pattern in hallucination_patterns:
+        # Find where the hallucination begins
+        match = re.search(pattern, cleaned_content)
+        if match:
+            # Keep only content before the hallucination
+            cleaned_content = cleaned_content[:match.start()]
+
+    # Remove trailing commas and whitespace
+    cleaned_content = cleaned_content.rstrip(',. \n\t')
+
+    return cleaned_content
+
+
 # Agent nodes with fallback
 class OrchestratorAgent:
     def __init__(self, llm: Runnable):
@@ -487,11 +517,26 @@ class OrchestratorAgent:
         messages = state["messages"]
 
         try:
-            # Process with the orchestrator prompt without tools
+            # Process with the orchestrator prompt
             response = self.llm.invoke(self.prompt.format_messages(messages=messages))
-            return {"messages": [AIMessage(content=response.content)]}
+            content = response.content
+
+            # Clean the response
+            cleaned_content = sanitize_llm_response(content)
+
+            # If too much content was removed, request a new response
+            if len(cleaned_content) < len(content) * 0.5:
+                # Try once more with a stability directive
+                retry_response = self.llm.invoke(
+                    self.prompt.format_messages(messages=[
+                        *messages,
+                        SystemMessage(content="Provide a clean, coherent response without technical artifacts.")
+                    ])
+                )
+                cleaned_content = sanitize_llm_response(retry_response.content)
+
+            return {"messages": [AIMessage(content=cleaned_content)]}
         except Exception as e:
-            # If all else fails, return a generic error message
             return {
                 "messages": [
                     AIMessage(
